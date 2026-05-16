@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Large migrated/generated research artifacts are kept locally but not tracked.
+data/
+outputs/
+*.db
+*.sqlite
+*.csv
+*.png
+*.pdf
+*.zip
+
+# Keep source, configs, docs, scripts, tests, and legacy scripts trackable.
+!legacy/*.py
+!legacy/README.md
+!configs/*.yaml
+!reports/*.md
+!examples/
+!examples/**/*.csv

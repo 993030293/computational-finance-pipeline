@@ -1,0 +1,88 @@
+data:
+  input_dir: examples/sample_data
+  output_dir: outputs/sample
+
+cleaning:
+  ts_plots_n: 2
+
+factors:
+  include_enhanced: true
+  winsor_p: 0.01
+  ic_decay_horizons: [1, 2, 3]
+  quantile_groups: 3
+
+backtest:
+  factor_weights:
+    z_VALUE: 1.0
+    z_MOM_12_1: 0.0
+    z_QUALITY: 0.0
+    z_SIZE: 1.0
+  top_quantile: 0.2
+  freq: 12
+  sign_flip: true
+  rolling_window: 6
+  strategy_name: sample
+  transaction_cost_bps: 10.0
+  slippage_bps: 5.0
+  robustness_quantiles: [0.2, 0.3]
+
+research:
+  train_end: "2021-12-31"
+  valid_end: "2022-06-30"
+  test_start: "2022-07-01"
+  bootstrap_samples: 100
+  bootstrap_ci: 0.95
+  random_seed: 42
+
+ml:
+  target: fwd_1m_ret
+  classification_threshold: 0.0
+  min_train_months: 12
+  test_window_months: 4
+  models:
+    - linear
+    - ridge
+    - logistic
+    - random_forest
+    - gradient_boosting
+  feature_cols:
+    - z_VALUE
+    - z_MOM_12_1
+    - z_QUALITY
+    - z_SIZE
+    - z_REVERSAL_1M
+    - z_VOL_1M
+    - z_ILLIQUIDITY
+  top_quantile: 0.2
+  random_seed: 42
+
+decision:
+  ml_model: logistic
+  sign_flip: true
+  factor_weights:
+    z_VALUE: 1.0
+    z_SIZE: 1.0
+  lookback_months: 6
+  risk_aversion: 3.0
+  turnover_penalty: 0.05
+  concentration_penalty: 0.01
+  max_weight: 0.35
+  transaction_cost_bps: 10.0
+  slippage_bps: 5.0
+
+tuning:
+  factor_weight_sets:
+    - z_VALUE: 1.0
+      z_SIZE: 1.0
+    - z_VALUE: 1.0
+      z_MOM_12_1: 1.0
+      z_QUALITY: 1.0
+      z_SIZE: 1.0
+  risk_aversion: [1.0, 3.0]
+  turnover_penalty: [0.0, 0.05]
+  top_quantile: [0.2, 0.3]
+
+stress:
+  high_cost_bps: 75.0
+  liquidity_drop_quantile: 0.2
+  price_limit_pct: 9.5

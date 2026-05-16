@@ -1,0 +1,13 @@
+# Minimal reproducibility lock for the admissions portfolio build.
+# AkShare is pinned from the original project environment because this
+# workstation does not currently have akshare installed.
+akshare==1.17.71
+matplotlib==3.10.8
+numpy==2.2.6
+pandas==2.2.3
+pyyaml==6.0.3
+requests==2.32.3
+scikit-learn==1.8.0
+scipy==1.15.3
+tabulate==0.10.0
+pytest==9.0.2
