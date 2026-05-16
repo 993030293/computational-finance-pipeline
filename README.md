@@ -6,6 +6,8 @@ An admissions-oriented data science project that turns raw A-share price data in
 
 **Research report:** [`reports/research_report.md`](reports/research_report.md)
 
+**Admissions packet:** [`reports/admissions_packet.md`](reports/admissions_packet.md)
+
 ## Quickstart
 
 Run the complete pipeline on the public sample dataset:
@@ -135,6 +137,7 @@ python -m cfpipeline run-all --skip-fetch --config configs/sample.yaml
 - Bilevel-style tuning: `outputs/latest/tuning/`
 - Market stress tests: `outputs/latest/stress/`
 - Research report: `reports/research_report.md`
+- Admissions packet: `reports/admissions_packet.md`
 - Optional report PDF: `reports/research_report.pdf`
 - Related work adaptation: `reports/related_work.md`
 - Application summaries: `reports/application_materials.md`

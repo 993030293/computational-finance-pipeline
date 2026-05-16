@@ -1,5 +1,7 @@
 # Application Materials
 
+See `reports/admissions_packet.md` for the polished one-page summary, resume bullets, SOP paragraph, professor-facing email, interview talking points, and limitations checklist.
+
 ## Resume Bullet
 
 Built a reproducible Python data science pipeline for A-share equity research, including data cleaning, factor construction, bootstrap and Fama-MacBeth statistical validation, transaction-cost-aware backtesting, walk-forward ML, decision-aware portfolio optimization, validation-only hyperparameter tuning, market mechanism stress tests, pytest coverage, CLI automation, and GitHub Actions CI.
