@@ -10,7 +10,7 @@ The default target is next-month stock return, `fwd_1m_ret`. Logistic classifica
 
 ## Validation
 
-The ML pipeline uses expanding-window walk-forward splits. Training months always precede test months, and the code does not randomly shuffle time-series labels.
+The ML pipeline supports expanding-window and purged walk-forward splits. The default config uses a one-month embargo between training and test windows to reduce adjacent-window leakage risk. Training months always precede test months, and the code does not randomly shuffle time-series labels.
 
 ## Metrics
 
@@ -25,6 +25,6 @@ The models are used to demonstrate statistical learning workflow, validation dis
 ## Limitations
 
 - Monthly cross-sectional returns are noisy.
-- Hyperparameters are intentionally conservative and not extensively tuned.
+- Hyperparameters are selected using validation-only rules; test metrics are reporting-only diagnostics.
 - Predictive relationships may be unstable across market regimes.
 - Performance tables are research diagnostics, not live trading evidence.

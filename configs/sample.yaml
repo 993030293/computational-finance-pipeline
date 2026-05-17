@@ -34,6 +34,12 @@ research:
   bootstrap_ci: 0.95
   random_seed: 42
 
+validation:
+  method: purged
+  embargo_months: 1
+  min_train_months: 12
+  test_window_months: 4
+
 ml:
   target: fwd_1m_ret
   classification_threshold: 0.0

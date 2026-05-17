@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .artifacts import atomic_write_csv, atomic_write_json, atomic_write_text
 from .backtest import (
     DEFAULT_ZCOLS,
     add_factor_score,
@@ -40,11 +41,15 @@ def param_grid(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     quantiles = [float(x) for x in cfg.get("top_quantile", [0.1, 0.2, 0.3])]
     rows = []
     for i, (weights, r, t, q) in enumerate(itertools.product(weight_sets, risk, turnover, quantiles)):
-        rows.append({"candidate_id": i, "factor_weights": weights, "risk_aversion": r, "turnover_penalty": t, "top_quantile": q})
+        rows.append(
+            {"candidate_id": i, "factor_weights": weights, "risk_aversion": r, "turnover_penalty": t, "top_quantile": q}
+        )
     return rows
 
 
-def score_with_train_signs(factors: pd.DataFrame, weights: dict[str, float], research_cfg: dict[str, Any]) -> pd.DataFrame:
+def score_with_train_signs(
+    factors: pd.DataFrame, weights: dict[str, float], research_cfg: dict[str, Any]
+) -> pd.DataFrame:
     out = factors.copy()
     train_mask = pd.to_datetime(out["month_end"]) <= pd.Timestamp(str(research_cfg.get("train_end", "2022-12-31")))
     zcols = [col for col in DEFAULT_ZCOLS if col in out.columns]
@@ -77,7 +82,9 @@ def evaluate_candidate(
         + float(decision_cfg.get("slippage_bps", 5.0))
         + float(candidate["turnover_penalty"]) * 100.0
     )
-    net_panel = apply_transaction_costs(gross_panel, turnover_panel, transaction_cost_bps=total_cost_bps, slippage_bps=0.0)
+    net_panel = apply_transaction_costs(
+        gross_panel, turnover_panel, transaction_cost_bps=total_cost_bps, slippage_bps=0.0
+    )
     net_ret = net_panel["long_short"]
     turnover = turnover_panel["long_short"]
     labels = assign_time_split(pd.Series(net_ret.index, index=net_ret.index), research_cfg)
@@ -102,6 +109,14 @@ def evaluate_candidate(
     return {"rows": rows, "returns": net_ret}
 
 
+def select_candidate_from_validation(results: pd.DataFrame) -> int:
+    validation = results[results["split"].eq("validation")].copy()
+    if validation.empty:
+        return int(results["candidate_id"].iloc[0])
+    selected = validation.sort_values(["sharpe", "ann_return"], ascending=False).iloc[0]
+    return int(selected["candidate_id"])
+
+
 def run_tuning(cfg: dict[str, Any]) -> dict[str, Path]:
     paths = PipelinePaths.from_config(cfg)
     paths.ensure_output_dirs()
@@ -119,11 +134,7 @@ def run_tuning(cfg: dict[str, Any]) -> dict[str, Path]:
         all_rows.extend(result["rows"])
         returns_by_candidate[int(candidate["candidate_id"])] = result["returns"]
     results = pd.DataFrame(all_rows)
-    validation = results[results["split"].eq("validation")].copy()
-    if validation.empty:
-        selected_id = int(results["candidate_id"].iloc[0])
-    else:
-        selected_id = int(validation.sort_values(["sharpe", "ann_return"], ascending=False)["candidate_id"].iloc[0])
+    selected_id = select_candidate_from_validation(results)
     selected = results[results["candidate_id"].eq(selected_id)].copy()
     test_performance = selected[selected["split"].eq("test")].copy()
 
@@ -134,26 +145,23 @@ def run_tuning(cfg: dict[str, Any]) -> dict[str, Path]:
     report_path = out_dir / "TUNING_REPORT.md"
     metadata_path = out_dir / "tuning_metadata.json"
 
-    results.to_csv(results_path, index=False, encoding="utf-8-sig")
-    selected.to_csv(selected_path, index=False, encoding="utf-8-sig")
-    test_performance.to_csv(test_path, index=False, encoding="utf-8-sig")
-    returns_by_candidate[selected_id].rename("net_return").to_csv(returns_path, header=True)
-    metadata_path.write_text(
-        json.dumps(
-            {
-                "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "factor_path": str(factor_path),
-                "selected_candidate_id": selected_id,
-                "selection_rule": "highest validation Sharpe, test split held out",
-                "research_config": research_cfg,
-                "tuning_config": tuning_cfg,
-            },
-            indent=2,
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    atomic_write_csv(results, results_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(selected, selected_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(test_performance, test_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(returns_by_candidate[selected_id].rename("net_return"), returns_path, header=True)
+    atomic_write_json(
+        metadata_path,
+        {
+            "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "factor_path": str(factor_path),
+            "selected_candidate_id": selected_id,
+            "selection_rule": "highest validation Sharpe, test split held out",
+            "research_config": research_cfg,
+            "tuning_config": tuning_cfg,
+        },
     )
-    report_path.write_text(
+    atomic_write_text(
+        report_path,
         "\n".join(
             [
                 "# MEHA-Inspired Bilevel Tuning Report",

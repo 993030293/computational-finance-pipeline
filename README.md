@@ -2,15 +2,13 @@
 
 [![CI](https://github.com/993030293/computational-finance-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/993030293/computational-finance-pipeline/actions/workflows/ci.yml)
 
-An admissions-oriented data science project that turns raw A-share price data into a reproducible factor research, statistical testing, machine learning, and portfolio backtesting workflow.
+A reproducible Python pipeline for computational finance research. The project covers market-data ingestion, cleaning, factor construction, statistical validation, machine learning experiments, portfolio backtesting, decision-aware optimization, tuning, stress tests, and benchmark reporting.
 
-**Research report:** [`reports/research_report.md`](reports/research_report.md)
-
-**Admissions packet:** [`reports/admissions_packet.md`](reports/admissions_packet.md)
+The emphasis is engineering discipline: typed configuration, fail-fast CLI behavior, sample-data reproducibility, CI quality gates, versioned outputs, run manifests, atomic writes, and leakage-aware validation. Results are research diagnostics, not investment advice or live trading claims.
 
 ## Quickstart
 
-Run the complete pipeline on the public sample dataset:
+Run the full pipeline on the public sample dataset:
 
 ```powershell
 git clone https://github.com/993030293/computational-finance-pipeline.git
@@ -20,139 +18,151 @@ python scripts/create_sample_data.py
 cfp run-all --skip-fetch --config configs/sample.yaml
 ```
 
-## Why This Project Matters
+The command writes a versioned run to `outputs/runs/<run_id>/` and publishes a Windows-compatible latest copy to `outputs/latest/`.
 
-This project demonstrates the core skills expected in data science and statistics graduate study:
+The sample quickstart uses `--skip-fetch` intentionally. Running `cfp run-all --config configs/sample.yaml` without `--skip-fetch` will attempt live AkShare data acquisition.
 
-- reproducible Python engineering with a CLI, configuration files, tests, and CI;
-- time-series experimental design without random data leakage;
-- statistical factor validation with IC, bootstrap confidence intervals, Fama-MacBeth regressions, and robustness checks;
-- supervised learning experiments with walk-forward validation;
-- honest reporting of transaction costs, turnover, limitations, and non-production assumptions.
+## Pipeline
 
-## Dataset
-
-- Market: A-share daily OHLCV data collected with AkShare.
-- Migrated baseline: 431,246 daily rows, 300 symbols, 2020-01-02 to 2025-12-16.
-- Factor panel: monthly cross-section, 11,937 rows, 2021-03-31 to 2025-10-31.
-- Large local data lives in `data/` and is ignored by git.
-- A small public sample lives in `examples/sample_data/` for CI and clone-and-run demos.
-
-See `DATA_CARD.md` for source, quality, and bias notes.
-
-## Methods
-
-The pipeline has eight stages:
-
-```text
-fetch -> clean -> factors -> backtest -> ml -> decision -> tune -> stress
+```mermaid
+flowchart LR
+    CFG[configs/*.yaml] --> CLI[cfp CLI]
+    SAMPLE[examples/sample_data] --> CLEAN[clean]
+    AK[AkShare] --> FETCH[fetch]
+    FETCH --> CLEAN
+    CLEAN --> FACTORS[factors]
+    FACTORS --> BACKTEST[backtest]
+    FACTORS --> ML[ml]
+    FACTORS --> DECISION[decision]
+    ML --> DECISION
+    FACTORS --> TUNE[tune]
+    FACTORS --> STRESS[stress]
+    BACKTEST --> BENCH[benchmarks]
+    ML --> BENCH
+    DECISION --> BENCH
+    TUNE --> BENCH
+    STRESS --> BENCH
+    BENCH --> OUT[outputs/runs/run_id]
+    OUT --> LATEST[outputs/latest]
+    OUT --> MANIFEST[run_manifest.json]
 ```
 
-## Method Map
+More detail:
 
-```text
-Raw A-share OHLCV
-  -> cleaning and technical indicators
-  -> factor panel and ML features
-  -> statistical validation
-  -> factor/ML prediction scores
-  -> LANCER-inspired decision optimizer
-  -> MEHA-inspired chronological hyperparameter tuning
-  -> EvoMarket-inspired market mechanism stress tests
-  -> application-ready reports
-```
+- Architecture: [`docs/architecture.md`](docs/architecture.md)
+- Stage I/O contract: [`docs/stage_io_contract.md`](docs/stage_io_contract.md)
+- Data card: [`DATA_CARD.md`](DATA_CARD.md)
+- Model card: [`MODEL_CARD.md`](MODEL_CARD.md)
+- Resume/interview notes: [`docs/resume.md`](docs/resume.md)
 
-- `clean`: type normalization, duplicate checks, price sanity checks, winsorized returns, MA/EMA/MACD/RSI/volatility features.
-- `factors`: VALUE, MOM_12_1, QUALITY, SIZE plus REVERSAL_1M, VOL_1M, ILLIQUIDITY.
-- `factor validation`: Rank IC, ICIR, bootstrap CI, IC decay, quantile group returns, Fama-MacBeth summaries.
-- `backtest`: long-only, short-basket, long-short, equal-weight benchmark, turnover, transaction costs, net performance, split-period results.
-- `ml`: linear/ridge/lasso/logistic/random-forest/gradient-boosting models with expanding-window walk-forward validation.
-- `decision`: independent mean-variance portfolio optimizer that maps factor/ML scores into long-only portfolio weights.
-- `tune`: chronological grid search that selects hyperparameters on validation performance only.
-- `stress`: market-mechanism sensitivity tests for cost, liquidity, price-limit, and T+1 approximations.
+## Stages
 
-## Baseline Result
+| Stage | Purpose | Main Outputs |
+|---|---|---|
+| `fetch` | AkShare data acquisition with cache, checkpoint/resume, rate limiting, and fetch report | `raw/`, `processed/`, `FETCH_REPORT.md` |
+| `clean` | Column normalization, type coercion, duplicate checks, price sanity checks, technical indicators | `processed/daily_price_panel.csv`, `QUALITY_REPORT.md` |
+| `factors` | Factor panel and statistical validation | `project4/factors.csv`, IC/decay/Fama-MacBeth summaries |
+| `backtest` | Factor portfolio returns, costs, turnover, NAV, drawdown | `proj5_output/` |
+| `ml` | Supervised learning with expanding or purged walk-forward validation | `ml/` |
+| `decision` | Score-to-weight optimizer with risk, turnover, and concentration penalties | `decision/` |
+| `tune` | Validation-only hyperparameter selection | `tuning/` |
+| `stress` | Market mechanism sensitivity tests | `stress/` |
+| `benchmarks` | Unified baseline registry and stability report | `benchmarks/` |
 
-The default factor strategy keeps the original baseline behavior while adding net-cost reporting.
+## Reproducibility
 
-| Strategy | Final NAV | Annual Return | Sharpe | Max Drawdown |
-|---|---:|---:|---:|---:|
-| long_only | 2.141338 | 25.66% | 1.222180 | -15.53% |
-| short_only | 0.593218 | -14.50% | -0.682753 | -55.97% |
-| long_short | 3.343105 | 43.63% | 2.288222 | -10.96% |
-| benchmark_ew | 1.105654 | 3.06% | 0.169608 | -22.49% |
+Every full run records:
 
-These results are not presented as a live trading claim. They are a research baseline for demonstrating statistical modeling and reproducible analysis.
+- `resolved_config.yaml`: merged defaults plus config and CLI overrides.
+- `run_manifest.json`: run id, command, git SHA, Python version, package version, stage status, input files, output files, and metric summaries.
+- `outputs/LATEST_RUN.json`: pointer to the latest successful run.
 
-## Research Report
+Single-stage commands still support the legacy `outputs/latest` style path, while `cfp run-all` uses `outputs/runs/<run_id>/`.
 
-The main admissions-facing research writeup is `reports/research_report.md`. It presents the project as an 8-12 page English research report covering data quality, factor validation, supervised learning, decision-focused portfolio optimization, validation-only tuning, market stress tests, limitations, and reproducibility.
+## Commands
 
-If a local PDF toolchain is available, the same report can also be exported to `reports/research_report.pdf`.
-
-## Reproduce
-
-Install:
-
-```powershell
-git clone https://github.com/993030293/computational-finance-pipeline.git
-cd computational-finance-pipeline
-python -m pip install -e ".[dev]"
-```
-
-Run with the small sample dataset:
+Run all stages with sample data:
 
 ```powershell
 python scripts/create_sample_data.py
 cfp run-all --skip-fetch --config configs/sample.yaml
 ```
 
-Run with the migrated full local dataset:
+Run selected stages:
 
 ```powershell
-cfp run-all --skip-fetch --config configs/default.yaml
+cfp clean --config configs/sample.yaml
+cfp factors --config configs/sample.yaml
+cfp backtest --config configs/sample.yaml
+cfp ml --config configs/sample.yaml
+cfp decision --config configs/sample.yaml
+cfp tune --config configs/sample.yaml
+cfp stress --config configs/sample.yaml
+cfp benchmarks --config configs/sample.yaml
 ```
 
-Run individual advanced stages:
-
-```powershell
-cfp decision --config configs/default.yaml
-cfp tune --config configs/default.yaml
-cfp stress --config configs/default.yaml
-```
-
-Without installing the package:
+Run without installing the package:
 
 ```powershell
 $env:PYTHONPATH = "src"
 python -m cfpipeline run-all --skip-fetch --config configs/sample.yaml
 ```
 
-## Outputs
-
-- Factor research: `outputs/latest/project4/`
-- Gross and net backtest: `outputs/latest/proj5_output/`
-- ML experiment: `outputs/latest/ml/`
-- Decision optimizer: `outputs/latest/decision/`
-- Bilevel-style tuning: `outputs/latest/tuning/`
-- Market stress tests: `outputs/latest/stress/`
-- Research report: `reports/research_report.md`
-- Admissions packet: `reports/admissions_packet.md`
-- Optional report PDF: `reports/research_report.pdf`
-- Related work adaptation: `reports/related_work.md`
-- Application summaries: `reports/application_materials.md`
-
-## Tests
+## Local QA
 
 ```powershell
-pytest
+python -m ruff check .
+python -m ruff format --check .
+python -m mypy
+python -m pytest --cov=cfpipeline --cov-report=term-missing --cov-fail-under=50
+python scripts/create_sample_data.py
+cfp run-all --skip-fetch --config configs/sample.yaml
 ```
 
-GitHub Actions runs tests and a CLI smoke test on sample data.
+Pre-commit:
+
+```powershell
+pre-commit install
+pre-commit run --all-files
+```
+
+GitHub Actions runs Ruff, format check, mypy, pytest coverage, a Linux/Windows Python matrix, and a sample CLI smoke test.
+
+## Data
+
+- Full local data lives in `data/` and is ignored by git.
+- Generated outputs live in `outputs/` and are ignored by git.
+- Public sample data lives in `examples/sample_data/` for CI and clone-and-run demos.
+- Market data fetched through AkShare or upstream providers may have separate usage and redistribution terms. See [`DATA_CARD.md`](DATA_CARD.md).
+
+## Baseline Metrics
+
+The repository may include research reports with historical baseline metrics from a migrated local dataset. These numbers are kept to document reproducibility and methodology. They should not be interpreted as deployable alpha, investment advice, or evidence of live trading performance.
+
+For current sample or full-data results, inspect:
+
+- `outputs/latest/proj5_output/performance_metrics.csv`
+- `outputs/latest/proj5_output/performance_metrics_net.csv`
+- `outputs/latest/benchmarks/benchmark_registry.csv`
+- `outputs/latest/benchmarks/STABILITY_REPORT.md`
+
+## Documentation
+
+- Research report: [`reports/research_report.md`](reports/research_report.md)
+- Related work adaptation: [`reports/related_work.md`](reports/related_work.md)
+- Figures index: [`reports/FIGURES.md`](reports/FIGURES.md)
+- Contributing guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- License: [`LICENSE`](LICENSE)
 
 ## Limitations
 
-- The dataset is survivorship-biased if the AkShare universe snapshot is used without historical constituents.
-- Transaction costs are simplified bps assumptions, not exchange-level execution simulation.
-- The monthly factor backtest is educational research, not a production trading system.
-- ML results should be interpreted as a statistical learning experiment under non-stationarity.
+- This is a research pipeline, not a production trading system.
+- Snapshot stock universes can introduce survivorship bias unless historical constituents are supplied.
+- Transaction costs and slippage are simplified basis-point assumptions.
+- Stress tests approximate mechanisms such as liquidity, price limits, and T+1 delay; they are not a full exchange simulator.
+- ML and factor relationships can be unstable across market regimes.
+- Test metrics are reporting-only diagnostics and must not be used for hyperparameter selection.
+
+## License
+
+Source code is released under the MIT License. Data obtained from third-party providers may have separate terms.

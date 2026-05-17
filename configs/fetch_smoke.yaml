@@ -1,0 +1,18 @@
+data:
+  input_dir: data
+  output_dir: outputs/fetch_smoke
+
+fetch:
+  start_date: "20240101"
+  end_date: "20240131"
+  final_n: 2
+  max_retries: 2
+  base_delay: 1.0
+  sleep_each: 1.0
+  use_cache: true
+  resume: true
+  max_workers: 1
+  checkpoint_every: 1
+  rate_limit_per_second:
+  cache_dir: cache/daily_prices
+  adjust: qfq

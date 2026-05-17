@@ -12,7 +12,7 @@ class PipelinePaths:
     output_dir: Path
 
     @classmethod
-    def from_config(cls, cfg: dict) -> "PipelinePaths":
+    def from_config(cls, cfg: dict) -> PipelinePaths:
         data_cfg = cfg.get("data", {})
         return cls(
             input_dir=Path(data_cfg.get("input_dir", "data")),

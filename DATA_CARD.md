@@ -6,7 +6,7 @@ The project uses A-share stock universe and daily OHLCV data acquired through Ak
 
 ## Intended Use
 
-This dataset is used for a graduate admissions portfolio project demonstrating data cleaning, factor construction, statistical validation, supervised learning, and backtesting methodology.
+This dataset is used to demonstrate data cleaning, factor construction, statistical validation, supervised learning, and backtesting methodology in a reproducible research pipeline.
 
 ## Not Intended For
 
@@ -28,3 +28,7 @@ The pipeline standardizes column names, coerces numeric/date types, removes dupl
 ## Access and Reproducibility
 
 Large migrated data is kept locally in `data/` and excluded from git. The repository includes `examples/sample_data/` so CI and reviewers can run the full pipeline without private or heavy artifacts.
+
+## License and Source Terms
+
+The repository source code is MIT licensed. Market data acquired through AkShare or its upstream providers may be subject to separate terms, redistribution limits, and exchange/vendor restrictions. This repository does not redistribute the full migrated market dataset. Users are responsible for checking the licensing and usage terms of any data source they fetch or provide.

@@ -11,6 +11,12 @@ fetch:
   base_delay: 1.0
   sleep_each: 0.5
   adjust: qfq
+  use_cache: true
+  resume: true
+  max_workers: 1
+  checkpoint_every: 25
+  rate_limit_per_second:
+  cache_dir: cache/daily_prices
 
 cleaning:
   winsor_lower_q: 0.005
@@ -71,6 +77,12 @@ research:
   bootstrap_samples: 1000
   bootstrap_ci: 0.95
   random_seed: 42
+
+validation:
+  method: purged
+  embargo_months: 1
+  min_train_months: 18
+  test_window_months: 6
 
 ml:
   target: fwd_1m_ret

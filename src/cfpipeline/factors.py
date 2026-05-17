@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -9,6 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .artifacts import atomic_write_csv, atomic_write_json, atomic_write_text
 from .cleaning import clean_daily_prices, read_csv, rename_any_columns
 from .paths import PipelinePaths, first_existing
 from .research import (
@@ -19,7 +19,6 @@ from .research import (
     summarize_group_returns,
     summarize_ic_decay,
 )
-
 
 BASE_FACTOR_COLS = ["VALUE", "MOM_12_1", "QUALITY", "SIZE"]
 ENHANCED_FACTOR_COLS = ["REVERSAL_1M", "VOL_1M", "ILLIQUIDITY"]
@@ -297,7 +296,7 @@ def write_factor_direction_report(ic_summary: pd.DataFrame, out_dir: Path) -> Pa
         mean_ic = float(row["mean"])
         sign = 1.0 if mean_ic >= 0 else -1.0
         lines.append(f"| {row['factor']} | {mean_ic:.6f} | {sign:.1f} |")
-    path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(path, "\n".join(lines), encoding="utf-8")
     return path
 
 
@@ -311,7 +310,9 @@ def run_factors(cfg: dict[str, Any]) -> dict[str, Path]:
     include_enhanced = bool(factor_cfg.get("include_enhanced", True))
     factor_cols = list(factor_cfg.get("factor_cols", BASE_FACTOR_COLS))
     if include_enhanced:
-        factor_cols = factor_cols + [col for col in factor_cfg.get("enhanced_factor_cols", ENHANCED_FACTOR_COLS) if col not in factor_cols]
+        factor_cols = factor_cols + [
+            col for col in factor_cfg.get("enhanced_factor_cols", ENHANCED_FACTOR_COLS) if col not in factor_cols
+        ]
 
     panel = compute_factors(daily, include_enhanced=include_enhanced)
     standardizable = [col for col in factor_cols if col in panel.columns]
@@ -323,14 +324,14 @@ def run_factors(cfg: dict[str, Any]) -> dict[str, Path]:
     corr_path = paths.output_project4_dir / "corr_matrix.csv"
     metadata_path = paths.output_project4_dir / "factor_run_metadata.json"
 
-    panel.to_csv(factors_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(panel, factors_path, index=False, encoding="utf-8-sig")
     z_cols = [f"z_{col}" for col in standardizable if f"z_{col}" in panel.columns]
     ic = rank_ic_by_month(panel, z_cols)
-    ic.to_csv(ic_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(ic, ic_path, index=False, encoding="utf-8-sig")
     ic_summary = summarize_ic(ic)
-    ic_summary.to_csv(ic_summary_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(ic_summary, ic_summary_path, index=False, encoding="utf-8-sig")
     corr = factor_corr_matrix(panel, standardizable)
-    corr.to_csv(corr_path, encoding="utf-8-sig")
+    atomic_write_csv(corr, corr_path, encoding="utf-8-sig")
     significance = ic_significance_table(
         ic,
         bootstrap_samples=int(research_cfg.get("bootstrap_samples", 1000)),
@@ -338,15 +339,15 @@ def run_factors(cfg: dict[str, Any]) -> dict[str, Path]:
         seed=int(research_cfg.get("random_seed", 42)),
     )
     significance_path = paths.output_project4_dir / "ic_significance.csv"
-    significance.to_csv(significance_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(significance, significance_path, index=False, encoding="utf-8-sig")
 
     horizons = [int(x) for x in factor_cfg.get("ic_decay_horizons", [1, 2, 3, 6])]
     decay = ic_decay(panel, z_cols, horizons)
     decay_path = paths.output_project4_dir / "ic_decay.csv"
-    decay.to_csv(decay_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(decay, decay_path, index=False, encoding="utf-8-sig")
     decay_summary = summarize_ic_decay(decay)
     decay_summary_path = paths.output_project4_dir / "ic_decay_summary.csv"
-    decay_summary.to_csv(decay_summary_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(decay_summary, decay_summary_path, index=False, encoding="utf-8-sig")
 
     group_returns = quantile_group_returns(
         panel,
@@ -355,32 +356,28 @@ def run_factors(cfg: dict[str, Any]) -> dict[str, Path]:
         ret_col="fwd_1m_ret",
     )
     group_returns_path = paths.output_project4_dir / "factor_group_returns.csv"
-    group_returns.to_csv(group_returns_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(group_returns, group_returns_path, index=False, encoding="utf-8-sig")
     group_summary = summarize_group_returns(group_returns)
     group_summary_path = paths.output_project4_dir / "factor_group_return_summary.csv"
-    group_summary.to_csv(group_summary_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(group_summary, group_summary_path, index=False, encoding="utf-8-sig")
 
     fmb = fama_macbeth_regression(panel, z_cols, ret_col="fwd_1m_ret")
     fmb_path = paths.output_project4_dir / "fama_macbeth_summary.csv"
-    fmb.to_csv(fmb_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(fmb, fmb_path, index=False, encoding="utf-8-sig")
 
     image_paths = plot_factor_outputs(ic, corr, paths.output_project4_dir)
     pdf_path = make_pdf_report(paths.output_project4_dir, source_path, ic_summary, image_paths)
     zip_path = make_submission_zip(paths.output_project4_dir)
     direction_path = write_factor_direction_report(ic_summary, paths.output_project4_dir)
-    metadata_path.write_text(
-        json.dumps(
-            {
-                "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "source": str(source_path),
-                "factor_cols": factor_cols,
-                "rows": int(len(panel)),
-                "symbols": int(panel["symbol"].nunique()),
-            },
-            indent=2,
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    atomic_write_json(
+        metadata_path,
+        {
+            "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "source": str(source_path),
+            "factor_cols": factor_cols,
+            "rows": int(len(panel)),
+            "symbols": int(panel["symbol"].nunique()),
+        },
     )
 
     return {
