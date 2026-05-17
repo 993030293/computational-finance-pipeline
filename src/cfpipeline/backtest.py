@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -8,10 +7,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .artifacts import atomic_write_csv, atomic_write_json, atomic_write_text
 from .cleaning import read_csv
 from .paths import PipelinePaths, first_existing
 from .research import robustness_by_quantile, summarize_by_split
-
 
 DEFAULT_ZCOLS = ["z_VALUE", "z_MOM_12_1", "z_QUALITY", "z_SIZE"]
 
@@ -78,12 +77,15 @@ def pivot_panel(factors: pd.DataFrame, col: str) -> pd.DataFrame:
     return factors.pivot(index="month_end", columns="symbol", values=col).sort_index().sort_index(axis=1)
 
 
-def factor_ic_signs(factors: pd.DataFrame, zcols: list[str], ret_col: str = "fwd_1m_ret") -> tuple[dict[str, float], dict[str, float]]:
+def factor_ic_signs(
+    factors: pd.DataFrame, zcols: list[str], ret_col: str = "fwd_1m_ret"
+) -> tuple[dict[str, float], dict[str, float]]:
     signs: dict[str, float] = {}
     ic_mean: dict[str, float] = {}
     for zcol in zcols:
-        ic_by_month = factors.groupby("month_end", group_keys=False)[[zcol, ret_col]].apply(
-            lambda frame: frame[zcol].rank().corr(frame[ret_col].rank())
+        factor_col = zcol
+        ic_by_month = factors.groupby("month_end", group_keys=False)[[factor_col, ret_col]].apply(
+            lambda frame, col=factor_col: frame[col].rank().corr(frame[ret_col].rank())
         )
         mean_ic = float(ic_by_month.mean(skipna=True))
         ic_mean[zcol] = mean_ic
@@ -329,7 +331,7 @@ def write_summary(
     if turnover is not None:
         summary["average_turnover"] = {col: float(turnover[col].mean()) for col in turnover.columns}
     json_path = out_dir / "backtest_summary.json"
-    json_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write_json(json_path, summary)
 
     md_path = out_dir / "BACKTEST_SUMMARY.md"
     lines = [
@@ -361,7 +363,7 @@ def write_summary(
                 *[f"- {col}: {turnover[col].mean():.6f}" for col in turnover.columns],
             ]
         )
-    md_path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(md_path, "\n".join(lines), encoding="utf-8")
     return md_path
 
 
@@ -381,8 +383,8 @@ def run_backtest(cfg: dict[str, Any]) -> dict[str, Path]:
 
     out_dir = paths.output_backtest_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    pd.Series(ic_mean, name="mean_ic").to_csv(out_dir / "ic_mean.csv")
-    pd.Series(signs, name="sign").to_csv(out_dir / "factor_signs.csv")
+    atomic_write_csv(pd.Series(ic_mean, name="mean_ic"), out_dir / "ic_mean.csv")
+    atomic_write_csv(pd.Series(signs, name="sign"), out_dir / "factor_signs.csv")
 
     scored = add_factor_score(factors, weights=backtest_cfg.get("factor_weights"))
     score_panel = pivot_panel(scored, "score")
@@ -390,50 +392,54 @@ def run_backtest(cfg: dict[str, Any]) -> dict[str, Path]:
     top_quantile = float(backtest_cfg.get("top_quantile", 0.2))
     weights = build_portfolio_weights(score_panel, top_quantile=top_quantile)
     port_ret = build_portfolios(score_panel, ret_panel, top_quantile)
-    port_ret.to_csv(out_dir / "portfolio_returns.csv", float_format="%.8f")
+    atomic_write_csv(port_ret, out_dir / "portfolio_returns.csv", float_format="%.8f")
     turnover = calculate_turnover(weights)
-    turnover.to_csv(out_dir / "turnover.csv", float_format="%.8f")
+    atomic_write_csv(turnover, out_dir / "turnover.csv", float_format="%.8f")
     net_ret = apply_transaction_costs(
         port_ret,
         turnover,
         transaction_cost_bps=float(backtest_cfg.get("transaction_cost_bps", 0.0)),
         slippage_bps=float(backtest_cfg.get("slippage_bps", 0.0)),
     )
-    net_ret.to_csv(out_dir / "portfolio_returns_net.csv", float_format="%.8f")
+    atomic_write_csv(net_ret, out_dir / "portfolio_returns_net.csv", float_format="%.8f")
     nav = (1.0 + port_ret).cumprod()
-    nav.to_csv(out_dir / "portfolio_nav.csv", float_format="%.8f")
+    atomic_write_csv(nav, out_dir / "portfolio_nav.csv", float_format="%.8f")
     net_nav = (1.0 + net_ret).cumprod()
-    net_nav.to_csv(out_dir / "portfolio_nav_net.csv", float_format="%.8f")
+    atomic_write_csv(net_nav, out_dir / "portfolio_nav_net.csv", float_format="%.8f")
 
     metrics_rows = []
     for col in port_ret.columns:
-        row = performance_metrics(port_ret[col], freq=int(backtest_cfg.get("freq", 12)), benchmark=port_ret["benchmark_ew"])
+        row = performance_metrics(
+            port_ret[col], freq=int(backtest_cfg.get("freq", 12)), benchmark=port_ret["benchmark_ew"]
+        )
         row["strategy"] = col
         metrics_rows.append(row)
     metrics = pd.DataFrame(metrics_rows).set_index("strategy")
-    metrics.to_csv(out_dir / "performance_metrics.csv", float_format="%.6f")
+    atomic_write_csv(metrics, out_dir / "performance_metrics.csv", float_format="%.6f")
     net_metrics_rows = []
     for col in net_ret.columns:
-        row = performance_metrics(net_ret[col], freq=int(backtest_cfg.get("freq", 12)), benchmark=net_ret["benchmark_ew"])
+        row = performance_metrics(
+            net_ret[col], freq=int(backtest_cfg.get("freq", 12)), benchmark=net_ret["benchmark_ew"]
+        )
         row["strategy"] = col
         net_metrics_rows.append(row)
     net_metrics = pd.DataFrame(net_metrics_rows).set_index("strategy")
-    net_metrics.to_csv(out_dir / "performance_metrics_net.csv", float_format="%.6f")
+    atomic_write_csv(net_metrics, out_dir / "performance_metrics_net.csv", float_format="%.6f")
 
     long_short = port_ret["long_short"]
-    compute_drawdown(long_short).to_csv(out_dir / "drawdown_long_short.csv", header=["drawdown"])
+    atomic_write_csv(compute_drawdown(long_short), out_dir / "drawdown_long_short.csv", header=["drawdown"])
     rolling_metrics(
         long_short,
         window=int(backtest_cfg.get("rolling_window", 12)),
         freq=int(backtest_cfg.get("freq", 12)),
-    ).to_csv(out_dir / "rolling_long_short.csv", float_format="%.6f")
+    ).pipe(atomic_write_csv, out_dir / "rolling_long_short.csv", float_format="%.6f")
     split_metrics = summarize_by_split(port_ret, cfg.get("research", {}))
-    split_metrics.to_csv(out_dir / "split_performance.csv", index=False, encoding="utf-8-sig")
+    atomic_write_csv(split_metrics, out_dir / "split_performance.csv", index=False, encoding="utf-8-sig")
     split_metrics_net = summarize_by_split(net_ret, cfg.get("research", {}))
-    split_metrics_net.to_csv(out_dir / "split_performance_net.csv", index=False, encoding="utf-8-sig")
+    atomic_write_csv(split_metrics_net, out_dir / "split_performance_net.csv", index=False, encoding="utf-8-sig")
     robustness_quantiles = [float(x) for x in backtest_cfg.get("robustness_quantiles", [0.1, 0.2, 0.3])]
     robustness = robustness_by_quantile(score_panel, ret_panel, build_portfolios, robustness_quantiles)
-    robustness.to_csv(out_dir / "robustness_quantiles.csv", index=False, encoding="utf-8-sig")
+    atomic_write_csv(robustness, out_dir / "robustness_quantiles.csv", index=False, encoding="utf-8-sig")
 
     strategy_name = str(backtest_cfg.get("strategy_name", "VALUE+SIZE")).replace(" ", "_")
     plot_cum_returns(port_ret, out_dir / f"cumret_curves__{strategy_name}.png")

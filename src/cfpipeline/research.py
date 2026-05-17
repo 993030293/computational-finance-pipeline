@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -134,7 +134,7 @@ def quantile_group_returns(
                     {
                         "month_end": month_end,
                         "factor": factor,
-                        "quantile": int(quantile),
+                        "quantile": int(cast(int, quantile)),
                         "mean_return": float(value),
                     }
                 )
@@ -169,7 +169,7 @@ def fama_macbeth_regression(panel: pd.DataFrame, factor_cols: list[str], ret_col
         except np.linalg.LinAlgError:
             continue
         row = {"month_end": month_end, "intercept": float(beta[0])}
-        row.update({col: float(value) for col, value in zip(cols, beta[1:])})
+        row.update({col: float(value) for col, value in zip(cols, beta[1:], strict=True)})
         rows.append(row)
     coef = pd.DataFrame(rows)
     if coef.empty:
@@ -193,17 +193,18 @@ def summarize_by_split(returns: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFra
             continue
         subset = returns.loc[list(idx)]
         for col in returns.columns:
-            values = subset[col].dropna()
+            values = subset[col].dropna().astype(float)
             if values.empty:
                 continue
+            values_array = values.to_numpy(dtype=float)
             rows.append(
                 {
                     "split": split_name,
                     "strategy": col,
                     "periods": int(len(values)),
-                    "mean_return": float(values.mean()),
-                    "volatility": float(values.std(ddof=0)),
-                    "cumulative_return": float((1 + values).prod() - 1),
+                    "mean_return": float(values_array.mean()),
+                    "volatility": float(values_array.std(ddof=0)),
+                    "cumulative_return": float(np.prod(1.0 + values_array) - 1.0),
                 }
             )
     return pd.DataFrame(rows).sort_values(["strategy", "split"]).reset_index(drop=True)

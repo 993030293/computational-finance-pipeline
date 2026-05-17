@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -9,6 +8,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 
+from .artifacts import atomic_write_csv, atomic_write_json, atomic_write_text
 from .backtest import (
     DEFAULT_ZCOLS,
     add_factor_score,
@@ -120,7 +120,9 @@ def optimize_long_only_weights(
             + float(concentration_penalty) * np.square(w).sum()
         )
 
-    result = minimize(objective, x0=x0, method="SLSQP", bounds=bounds, constraints=constraints, options={"maxiter": 200})
+    result = minimize(
+        objective, x0=x0, method="SLSQP", bounds=bounds, constraints=constraints, options={"maxiter": 200}
+    )
     if not result.success or np.any(~np.isfinite(result.x)):
         weights = x0
     else:
@@ -204,7 +206,9 @@ def run_decision(cfg: dict[str, Any]) -> dict[str, Path]:
             concentration_penalty=float(decision_cfg.get("concentration_penalty", 0.01)),
             max_weight=float(decision_cfg.get("max_weight", 0.25)),
         )
-        total_cost_bps = float(decision_cfg.get("transaction_cost_bps", 10.0)) + float(decision_cfg.get("slippage_bps", 5.0))
+        total_cost_bps = float(decision_cfg.get("transaction_cost_bps", 10.0)) + float(
+            decision_cfg.get("slippage_bps", 5.0)
+        )
         net_ret = gross_ret - turnover.reindex(gross_ret.index).fillna(0.0) * total_cost_bps / 10000.0
         returns_frames.append(
             pd.DataFrame(
@@ -233,22 +237,18 @@ def run_decision(cfg: dict[str, Any]) -> dict[str, Path]:
     metrics_path = out_dir / "decision_metrics.csv"
     metadata_path = out_dir / "decision_metadata.json"
     report_path = out_dir / "DECISION_REPORT.md"
-    returns_df.to_csv(returns_path, index=False, encoding="utf-8-sig")
-    weights_df.to_csv(weights_path, index=False, encoding="utf-8-sig")
-    metrics_df.to_csv(metrics_path, index=False, encoding="utf-8-sig")
-    metadata_path.write_text(
-        json.dumps(
-            {
-                "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "factor_path": str(factor_path),
-                "ml_prediction_path": None if ml_path is None else str(ml_path),
-                "config": decision_cfg,
-                "sources": sorted(score_panels.keys()),
-            },
-            indent=2,
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    atomic_write_csv(returns_df, returns_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(weights_df, weights_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(metrics_df, metrics_path, index=False, encoding="utf-8-sig")
+    atomic_write_json(
+        metadata_path,
+        {
+            "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "factor_path": str(factor_path),
+            "ml_prediction_path": None if ml_path is None else str(ml_path),
+            "config": decision_cfg,
+            "sources": sorted(score_panels.keys()),
+        },
     )
     lines = [
         "# LANCER-Inspired Decision Optimization Report",
@@ -257,9 +257,11 @@ def run_decision(cfg: dict[str, Any]) -> dict[str, Path]:
         "It is inspired by decision-focused learning but does not copy or depend on LANCER source code.",
         "",
         "## Metrics",
-        metrics_df.to_markdown(index=False, floatfmt=".6f") if not metrics_df.empty else "No decision metrics generated.",
+        metrics_df.to_markdown(index=False, floatfmt=".6f")
+        if not metrics_df.empty
+        else "No decision metrics generated.",
     ]
-    report_path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(report_path, "\n".join(lines), encoding="utf-8")
     return {
         "returns": returns_path,
         "weights": weights_path,

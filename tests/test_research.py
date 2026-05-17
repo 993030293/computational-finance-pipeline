@@ -12,7 +12,9 @@ from cfpipeline.research import (
 
 def test_time_split_labels_are_chronological() -> None:
     dates = pd.Series(pd.to_datetime(["2021-01-31", "2023-06-30", "2024-02-29"]))
-    labels = assign_time_split(dates, {"train_end": "2022-12-31", "valid_end": "2023-12-31", "test_start": "2024-01-01"})
+    labels = assign_time_split(
+        dates, {"train_end": "2022-12-31", "valid_end": "2023-12-31", "test_start": "2024-01-01"}
+    )
     assert labels.tolist() == ["train", "validation", "test"]
 
 

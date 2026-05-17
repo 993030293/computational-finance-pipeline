@@ -4,17 +4,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
+from .artifacts import atomic_write_csv, atomic_write_text
 from .backtest import (
     add_factor_score,
-    apply_transaction_costs,
+    apply_sign_flip,
     build_portfolio_weights,
     build_portfolios,
     calculate_turnover,
     factor_ic_signs,
-    apply_sign_flip,
     load_data,
     performance_metrics,
     pivot_panel,
@@ -80,24 +79,30 @@ def run_stress(cfg: dict[str, Any]) -> dict[str, Path]:
     liquidity_cut = float(stress_cfg.get("liquidity_drop_quantile", 0.2))
     size_panel = pivot_panel(factors, "SIZE").reindex_like(score_panel)
     liquid_score = score_panel.mask(size_panel.rank(axis=1, pct=True).le(liquidity_cut))
-    regime_returns["liquidity_stress_return"] = build_portfolios(liquid_score, ret_panel, top_quantile=top_quantile)["long_short"]
-
-    locked = price_limit_mask(prices, score_panel.index, score_panel.columns, float(stress_cfg.get("price_limit_pct", 9.5)))
-    price_limit_score = score_panel.mask(locked)
-    regime_returns["price_limit_filtered_return"] = build_portfolios(price_limit_score, ret_panel, top_quantile=top_quantile)[
+    regime_returns["liquidity_stress_return"] = build_portfolios(liquid_score, ret_panel, top_quantile=top_quantile)[
         "long_short"
     ]
 
+    locked = price_limit_mask(
+        prices, score_panel.index, score_panel.columns, float(stress_cfg.get("price_limit_pct", 9.5))
+    )
+    price_limit_score = score_panel.mask(locked)
+    regime_returns["price_limit_filtered_return"] = build_portfolios(
+        price_limit_score, ret_panel, top_quantile=top_quantile
+    )["long_short"]
+
     # Approximate T+1 inventory constraint by delaying the rebalance signal one month.
     delayed_score = score_panel.shift(1)
-    regime_returns["t_plus_one_delay_return"] = build_portfolios(delayed_score, ret_panel, top_quantile=top_quantile)["long_short"]
+    regime_returns["t_plus_one_delay_return"] = build_portfolios(delayed_score, ret_panel, top_quantile=top_quantile)[
+        "long_short"
+    ]
 
     metrics = summarize_regimes(regime_returns)
     returns_path = out_dir / "market_stress_returns.csv"
     metrics_path = out_dir / "market_stress_metrics.csv"
     report_path = out_dir / "market_stress_report.md"
-    regime_returns.to_csv(returns_path, encoding="utf-8-sig")
-    metrics.to_csv(metrics_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(regime_returns, returns_path, encoding="utf-8-sig")
+    atomic_write_csv(metrics, metrics_path, index=False, encoding="utf-8-sig")
     lines = [
         "# EvoMarket-Inspired Market Mechanism Stress Report",
         "",
@@ -118,7 +123,7 @@ def run_stress(cfg: dict[str, Any]) -> dict[str, Path]:
         "## Metrics",
         metrics.to_markdown(index=False, floatfmt=".6f"),
     ]
-    report_path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(report_path, "\n".join(lines), encoding="utf-8")
     return {
         "returns": returns_path,
         "metrics": metrics_path,

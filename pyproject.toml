@@ -22,7 +22,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "mypy>=1.10",
+  "pandas-stubs>=2.2",
+  "pre-commit>=3.7",
   "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.8",
+  "types-PyYAML>=6.0",
+  "types-requests>=2.31",
 ]
 
 [project.scripts]
@@ -35,3 +42,40 @@ where = ["src"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = ["legacy", "data", "outputs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cfpipeline"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+files = [
+  "src/cfpipeline/artifacts.py",
+  "src/cfpipeline/benchmarks.py",
+  "src/cfpipeline/cli.py",
+  "src/cfpipeline/config.py",
+  "src/cfpipeline/paths.py",
+  "src/cfpipeline/research.py",
+  "src/cfpipeline/validation.py",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["cfpipeline"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 50

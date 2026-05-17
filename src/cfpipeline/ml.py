@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -8,9 +7,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .artifacts import atomic_write_csv, atomic_write_json, atomic_write_text
 from .backtest import build_portfolios, performance_metrics, pivot_panel
 from .cleaning import read_csv
 from .paths import PipelinePaths, first_existing
+from .validation import assert_no_split_leakage, walk_forward_month_splits
 
 
 def factor_candidates(paths: PipelinePaths) -> list[Path]:
@@ -59,17 +60,31 @@ def make_model(name: str, seed: int):
     raise ValueError(f"Unknown model: {name}")
 
 
-def walk_forward_splits(months: list[pd.Timestamp], min_train_months: int, test_window_months: int):
-    split_id = 0
-    start = int(min_train_months)
-    while start < len(months):
-        train_months = months[:start]
-        test_months = months[start : start + int(test_window_months)]
-        if not test_months:
-            break
-        yield split_id, train_months, test_months
-        split_id += 1
-        start += int(test_window_months)
+def validation_runtime_config(ml_cfg: dict[str, Any], validation_cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    validation_cfg = validation_cfg or {}
+    return {
+        "method": str(validation_cfg.get("method", "expanding")),
+        "embargo_months": int(validation_cfg.get("embargo_months", 0)),
+        "min_train_months": int(validation_cfg.get("min_train_months", ml_cfg.get("min_train_months", 18))),
+        "test_window_months": int(validation_cfg.get("test_window_months", ml_cfg.get("test_window_months", 6))),
+    }
+
+
+def walk_forward_splits(
+    months: list[pd.Timestamp],
+    min_train_months: int,
+    test_window_months: int,
+    *,
+    method: str = "expanding",
+    embargo_months: int = 0,
+):
+    yield from walk_forward_month_splits(
+        months,
+        min_train_months=min_train_months,
+        test_window_months=test_window_months,
+        method=method,
+        embargo_months=embargo_months,
+    )
 
 
 def predict_scores(model, model_name: str, x_test: pd.DataFrame) -> np.ndarray:
@@ -98,7 +113,12 @@ def evaluate_predictions(predictions: pd.DataFrame, top_quantile: float) -> pd.D
     from sklearn.metrics import mean_absolute_error, mean_squared_error, roc_auc_score
 
     rows: list[dict[str, Any]] = []
-    for model, group in predictions.groupby("model"):
+    group_cols = ["validation_method", "model"] if "validation_method" in predictions.columns else ["model"]
+    for group_key, group in predictions.groupby(group_cols):
+        if isinstance(group_key, tuple):
+            validation_method, model = group_key
+        else:
+            validation_method, model = "", group_key
         y = group["y_true"].astype(float)
         score = group["score"].astype(float)
         target_class = group["target_class"].astype(int)
@@ -112,18 +132,20 @@ def evaluate_predictions(predictions: pd.DataFrame, top_quantile: float) -> pd.D
         else:
             rmse = float(np.sqrt(mean_squared_error(y, score)))
             mae = float(mean_absolute_error(y, score))
-        rows.append(
-            {
-                "model": model,
-                "observations": int(len(group)),
-                "rmse": rmse,
-                "mae": mae,
-                "rank_ic": rank_ic(y, score),
-                "auc": float(auc) if pd.notna(auc) else np.nan,
-                "precision_at_top": precision_at_top(target_class, score, top_quantile),
-            }
-        )
-    return pd.DataFrame(rows).sort_values("model").reset_index(drop=True)
+        row = {
+            "model": str(model),
+            "observations": int(len(group)),
+            "rmse": rmse,
+            "mae": mae,
+            "rank_ic": rank_ic(y, score),
+            "auc": float(auc) if pd.notna(auc) else np.nan,
+            "precision_at_top": precision_at_top(target_class, score, top_quantile),
+        }
+        if validation_method:
+            row["validation_method"] = str(validation_method)
+        rows.append(row)
+    sort_cols = ["validation_method", "model"] if rows and "validation_method" in rows[0] else ["model"]
+    return pd.DataFrame(rows).sort_values(sort_cols).reset_index(drop=True)
 
 
 def model_feature_importance(model, model_name: str, feature_cols: list[str]) -> pd.Series:
@@ -139,18 +161,27 @@ def model_feature_importance(model, model_name: str, feature_cols: list[str]) ->
     return pd.Series(np.nan, index=feature_cols)
 
 
-def run_walk_forward(data: pd.DataFrame, feature_cols: list[str], cfg: dict[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def run_walk_forward(
+    data: pd.DataFrame, feature_cols: list[str], cfg: dict[str, Any], validation_cfg: dict[str, Any] | None = None
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     target = str(cfg.get("target", "fwd_1m_ret"))
     months = list(pd.Series(data["month_end"].drop_duplicates()).sort_values())
     seed = int(cfg.get("random_seed", 42))
+    validation = validation_runtime_config(cfg, validation_cfg)
     predictions: list[pd.DataFrame] = []
     importances: list[pd.DataFrame] = []
 
-    for split_id, train_months, test_months in walk_forward_splits(
+    for split in walk_forward_splits(
         months,
-        int(cfg.get("min_train_months", 18)),
-        int(cfg.get("test_window_months", 6)),
+        validation["min_train_months"],
+        validation["test_window_months"],
+        method=validation["method"],
+        embargo_months=validation["embargo_months"],
     ):
+        assert_no_split_leakage(split)
+        split_id = split.split_id
+        train_months = split.train_months
+        test_months = split.test_months
         train = data[data["month_end"].isin(train_months)]
         test = data[data["month_end"].isin(test_months)]
         if train.empty or test.empty:
@@ -173,10 +204,12 @@ def run_walk_forward(data: pd.DataFrame, feature_cols: list[str], cfg: dict[str,
             pred = pred.rename(columns={target: "y_true"})
             pred["model"] = str(model_name)
             pred["split_id"] = split_id
-            pred["train_start"] = min(train_months)
-            pred["train_end"] = max(train_months)
-            pred["test_start"] = min(test_months)
-            pred["test_end"] = max(test_months)
+            pred["validation_method"] = validation["method"]
+            pred["embargo_months"] = validation["embargo_months"] if validation["method"] == "purged" else 0
+            pred["train_start"] = split.train_start
+            pred["train_end"] = split.train_end
+            pred["test_start"] = split.test_start
+            pred["test_end"] = split.test_end
             pred["score"] = score
             predictions.append(pred)
 
@@ -194,15 +227,24 @@ def run_walk_forward(data: pd.DataFrame, feature_cols: list[str], cfg: dict[str,
 def backtest_ml_scores(predictions: pd.DataFrame, top_quantile: float) -> tuple[pd.DataFrame, pd.DataFrame]:
     rows: list[pd.DataFrame] = []
     metrics: list[dict[str, Any]] = []
-    for model, group in predictions.groupby("model"):
+    group_cols = ["validation_method", "model"] if "validation_method" in predictions.columns else ["model"]
+    for group_key, group in predictions.groupby(group_cols):
+        if isinstance(group_key, tuple):
+            validation_method, model = group_key
+        else:
+            validation_method, model = "", group_key
         score_panel = pivot_panel(group.rename(columns={"score": "ml_score"}), "ml_score")
         ret_panel = pivot_panel(group.rename(columns={"y_true": "fwd_1m_ret"}), "fwd_1m_ret")
         returns = build_portfolios(score_panel, ret_panel, top_quantile=top_quantile)
         returns.insert(0, "model", model)
+        if validation_method:
+            returns.insert(0, "validation_method", validation_method)
         rows.append(returns.reset_index())
         for strategy in ["long_only", "short_only", "long_short", "benchmark_ew"]:
             metric = performance_metrics(returns[strategy], benchmark=returns["benchmark_ew"])
             metric["model"] = model
+            if validation_method:
+                metric["validation_method"] = validation_method
             metric["strategy"] = strategy
             metrics.append(metric)
     return pd.concat(rows, ignore_index=True), pd.DataFrame(metrics)
@@ -222,20 +264,23 @@ def write_ml_report(
         f"- Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"- Dataset: `{dataset_path}`",
         f"- Target: `{cfg.get('target', 'fwd_1m_ret')}`",
-        "- Validation protocol: expanding-window walk-forward split; no random shuffle.",
+        f"- Validation protocol: `{cfg.get('validation_method', 'walk-forward')}` walk-forward split; no random shuffle.",
+        f"- Embargo months: {cfg.get('embargo_months', 0)}",
         "",
         "## Prediction Metrics",
         metrics.to_markdown(index=False, floatfmt=".6f") if not metrics.empty else "No metrics generated.",
         "",
         "## Portfolio Metrics From ML Scores",
-        backtest_metrics.to_markdown(index=False, floatfmt=".6f") if not backtest_metrics.empty else "No backtest metrics generated.",
+        backtest_metrics.to_markdown(index=False, floatfmt=".6f")
+        if not backtest_metrics.empty
+        else "No backtest metrics generated.",
         "",
         "## Limitations",
         "- Monthly labels are noisy and non-stationary.",
         "- The experiment is designed for statistical learning demonstration, not live trading deployment.",
         "- Hyperparameters are intentionally conservative to reduce overfitting in an admissions portfolio context.",
     ]
-    path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(path, "\n".join(lines), encoding="utf-8")
     return path
 
 
@@ -243,30 +288,47 @@ def run_ml(cfg: dict[str, Any]) -> dict[str, Path]:
     paths = PipelinePaths.from_config(cfg)
     paths.ensure_output_dirs()
     ml_cfg = cfg.get("ml", {})
+    validation_cfg = cfg.get("validation", {})
     out_dir = paths.output_dir / "ml"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     factors, dataset_path = load_factor_dataset(paths)
     dataset, feature_cols = prepare_ml_dataset(factors, ml_cfg)
-    dataset.to_csv(out_dir / "ml_dataset.csv", index=False, encoding="utf-8-sig")
-    predictions, importances = run_walk_forward(dataset, feature_cols, ml_cfg)
+    atomic_write_csv(dataset, out_dir / "ml_dataset.csv", index=False, encoding="utf-8-sig")
+    primary_validation = validation_runtime_config(ml_cfg, validation_cfg)
+    predictions, importances = run_walk_forward(dataset, feature_cols, ml_cfg, primary_validation)
     predictions_path = out_dir / "ml_predictions.csv"
-    predictions.to_csv(predictions_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(predictions, predictions_path, index=False, encoding="utf-8-sig")
 
     top_quantile = float(ml_cfg.get("top_quantile", 0.2))
     metrics = evaluate_predictions(predictions, top_quantile) if not predictions.empty else pd.DataFrame()
     metrics_path = out_dir / "ml_model_metrics.csv"
-    metrics.to_csv(metrics_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(metrics, metrics_path, index=False, encoding="utf-8-sig")
+
+    comparison_frames: list[pd.DataFrame] = []
+    for method in ["expanding", "purged"]:
+        comparison_validation = {
+            **primary_validation,
+            "method": method,
+            "embargo_months": primary_validation["embargo_months"] if method == "purged" else 0,
+        }
+        compare_predictions, _ = run_walk_forward(dataset, feature_cols, ml_cfg, comparison_validation)
+        if not compare_predictions.empty:
+            comparison_frames.append(evaluate_predictions(compare_predictions, top_quantile))
+    validation_comparison = pd.concat(comparison_frames, ignore_index=True) if comparison_frames else pd.DataFrame()
+    validation_comparison_path = out_dir / "ml_validation_comparison.csv"
+    atomic_write_csv(validation_comparison, validation_comparison_path, index=False, encoding="utf-8-sig")
 
     importances_path = out_dir / "ml_feature_importance.csv"
     if not importances.empty:
-        importances.groupby(["model", "feature"], as_index=False)["importance"].mean().to_csv(
+        atomic_write_csv(
+            importances.groupby(["model", "feature"], as_index=False)["importance"].mean(),
             importances_path,
             index=False,
             encoding="utf-8-sig",
         )
     else:
-        pd.DataFrame(columns=["model", "feature", "importance"]).to_csv(importances_path, index=False)
+        atomic_write_csv(pd.DataFrame(columns=["model", "feature", "importance"]), importances_path, index=False)
 
     if predictions.empty:
         ml_returns = pd.DataFrame()
@@ -275,29 +337,29 @@ def run_ml(cfg: dict[str, Any]) -> dict[str, Path]:
         ml_returns, ml_backtest_metrics = backtest_ml_scores(predictions, top_quantile)
     ml_returns_path = out_dir / "ml_portfolio_returns.csv"
     ml_backtest_path = out_dir / "ml_backtest_metrics.csv"
-    ml_returns.to_csv(ml_returns_path, index=False, encoding="utf-8-sig")
-    ml_backtest_metrics.to_csv(ml_backtest_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(ml_returns, ml_returns_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(ml_backtest_metrics, ml_backtest_path, index=False, encoding="utf-8-sig")
 
     metadata_path = out_dir / "ml_run_metadata.json"
-    metadata_path.write_text(
-        json.dumps(
-            {
-                "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "dataset_path": str(dataset_path),
-                "rows": int(len(dataset)),
-                "feature_cols": feature_cols,
-                "config": ml_cfg,
-            },
-            indent=2,
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    atomic_write_json(
+        metadata_path,
+        {
+            "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "dataset_path": str(dataset_path),
+            "rows": int(len(dataset)),
+            "feature_cols": feature_cols,
+            "config": ml_cfg,
+            "validation": primary_validation,
+            "validation_comparison_path": str(validation_comparison_path),
+        },
     )
-    report_path = write_ml_report(out_dir, dataset_path, metrics, ml_backtest_metrics, ml_cfg)
+    report_cfg = {**ml_cfg, **primary_validation}
+    report_path = write_ml_report(out_dir, dataset_path, metrics, ml_backtest_metrics, report_cfg)
     return {
         "dataset": out_dir / "ml_dataset.csv",
         "predictions": predictions_path,
         "model_metrics": metrics_path,
+        "validation_comparison": validation_comparison_path,
         "feature_importance": importances_path,
         "portfolio_returns": ml_returns_path,
         "backtest_metrics": ml_backtest_path,

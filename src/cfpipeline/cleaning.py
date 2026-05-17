@@ -8,8 +8,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .artifacts import atomic_write_csv, atomic_write_json, atomic_write_text
 from .paths import PipelinePaths, first_existing
-
 
 COLUMN_ALIASES = {
     "日期": "date",
@@ -219,10 +219,9 @@ def engineer_features(
         g["ema26"] = ema_slow
         g["macd"] = macd
         g["macd_signal"] = _ema(macd, int(cfg.get("ema_signal", 9)))
-        g["vol_20"] = (
-            g["log_ret"].rolling(int(cfg.get("vol_win", 20)), min_periods=int(cfg.get("vol_win", 20))).std(ddof=0)
-            * np.sqrt(252)
-        )
+        g["vol_20"] = g["log_ret"].rolling(int(cfg.get("vol_win", 20)), min_periods=int(cfg.get("vol_win", 20))).std(
+            ddof=0
+        ) * np.sqrt(252)
         g["rsi_14"] = _rsi(g["close"], int(cfg.get("rsi_period", 14)))
         g["abs_ret"] = g["ret_w"].abs()
         frames.append(g)
@@ -233,11 +232,7 @@ def engineer_features(
         "after": quality_profile(final),
         "z_flags": int(final["flag_z"].sum()),
         "iqr_flags": int(final["flag_iqr"].sum()),
-        "ret_stats": {
-            key: float(val)
-            for key, val in final["ret"].describe().items()
-            if pd.notna(val)
-        },
+        "ret_stats": {key: float(val) for key, val in final["ret"].describe().items() if pd.notna(val)},
     }
     return final, stats
 
@@ -355,8 +350,7 @@ def write_quality_report(stats: dict[str, Any], source_path: Path, output_path: 
         json.dumps(cfg, indent=2, ensure_ascii=False),
         "```",
     ]
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(output_path, "\n".join(lines), encoding="utf-8")
 
 
 def input_daily_candidates(paths: PipelinePaths) -> list[Path]:
@@ -385,22 +379,18 @@ def run_cleaning(cfg: dict[str, Any]) -> dict[str, Path]:
     report_path = paths.output_dir / "QUALITY_REPORT.md"
     steps_path = paths.output_dir / "CLEANING_STEPS.json"
 
-    cleaned_daily.to_csv(daily_panel_path, index=False, encoding="utf-8-sig")
-    cleaned_daily.to_csv(compat_daily_path, index=False, encoding="utf-8-sig")
-    tech.to_csv(tech_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(cleaned_daily, daily_panel_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(cleaned_daily, compat_daily_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(tech, tech_path, index=False, encoding="utf-8-sig")
     plot_eda(tech, paths.output_eda_dir, cleaning_cfg)
     write_quality_report(stats, source_path, report_path, cleaning_cfg)
-    steps_path.write_text(
-        json.dumps(
-            {
-                "config": cleaning_cfg,
-                "source": str(source_path),
-                "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
+    atomic_write_json(
+        steps_path,
+        {
+            "config": cleaning_cfg,
+            "source": str(source_path),
+            "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        },
     )
 
     return {
