@@ -20,6 +20,8 @@ cfp run-all --skip-fetch --config configs/sample.yaml
 
 The command writes a versioned run to `outputs/runs/<run_id>/` and publishes a Windows-compatible latest copy to `outputs/latest/`.
 
+The sample quickstart uses `--skip-fetch` intentionally. Running `cfp run-all --config configs/sample.yaml` without `--skip-fetch` will attempt live AkShare data acquisition.
+
 ## Pipeline
 
 ```mermaid
